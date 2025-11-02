@@ -25,14 +25,67 @@ def u_exact(x):
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
-        # <<<MODEL_DEF>>>
+class PINN(torch.nn.Module):
+    def __init__(self):
+        super(PINN, self).__init__()
+        layers = []
+        layers.append(torch.nn.Linear(1, hidden_units))
+        layers.append(torch.nn.Tanh())
+        for _ in range(max(0, hidden_layers - 1)):
+            layers.append(torch.nn.Linear(hidden_units, hidden_units))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(hidden_units, 1))
+        self.net = torch.nn.Sequential(*layers)
+
+        # Xavier init for linear layers
+        for m in self.net:
+            if isinstance(m, torch.nn.Linear):
+                torch.nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
+<<<FORWARD_DEF>>>
+def forward(self, x):
+    # ensure column vector
+    if x.dim() == 1:
+        x = x.unsqueeze(1)
+    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])
+    x = (x - 0.5) * 2.0
+    return self.net(x)
+<<<HYPERPARAMS>>>
+epochs = 5000
+lr = 1e-3
+collocation = 1000
+bc_weight = 100.0
+verbose_every = 100
+hidden_layers = 3
+hidden_units = 50
 
     def forward(self, x):
-        # <<<FORWARD_DEF>>>
+def forward(self, x):
+    # ensure column vector
+    if x.dim() == 1:
+        x = x.unsqueeze(1)
+    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])
+    x = (x - 0.5) * 2.0
+    return self.net(x)
+<<<HYPERPARAMS>>>
+epochs = 5000
+lr = 1e-3
+collocation = 1000
+bc_weight = 100.0
+verbose_every = 100
+hidden_layers = 3
+hidden_units = 50
         pass
 
 HYPERPARAMS = {
-    # __HYPERPARAMS_MARKER__
+    epochs = 5000
+lr = 1e-3
+collocation = 1000
+bc_weight = 100.0
+verbose_every = 100
+hidden_layers = 3
+hidden_units = 50
 }
 
 # ---------------------- PINN core --------------------------------------------

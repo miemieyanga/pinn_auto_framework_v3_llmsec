@@ -2,6 +2,7 @@
 import os, json, argparse, copy, sys, time, random
 from dataclasses import dataclass
 import pathlib
+import re
 from typing import Dict, Any
 from openai import OpenAI
 
@@ -45,6 +46,39 @@ class ExecResult:
     metrics: Dict[str, Any] = None
     fragments: Dict[str, str] = None
 
+
+def _sanitize_hparams_fragment(frag: str):
+    """Parse a loose fragment into a safe Python dict.
+    Strategy: extract known numeric keys via regex; merge with safe defaults; clamp caps.
+    """
+    defaults = {
+        "epochs": 500,
+        "lr": 1e-3,
+        "collocation": 200,
+        "bc_weight": 100.0,
+        "verbose_every": 200,
+    }
+    # regex extraction (very forgiving)
+    def _num(pattern, cast=float, default=None):
+        m = re.search(pattern, frag, flags=re.IGNORECASE)
+        if not m: 
+            return default
+        try:
+            return cast(m.group(1))
+        except Exception:
+            return default
+    ep = _num(r"epochs\s*[:=]\s*(\d+)", cast=int, default=None)
+    lr = _num(r"lr\s*[:=]\s*([0-9]*\.?[0-9]+(?:e[-+]?\d+)?)", cast=float, default=None)
+    co = _num(r"collocation\s*[:=]\s*(\d+)", cast=int, default=None)
+    bw = _num(r"bc[_\s]*weight\s*[:=]\s*([0-9]*\.?[0-9]+(?:e[-+]?\d+)?)", cast=float, default=None)
+    ve = _num(r"verbose[_\s]*every\s*[:=]\s*(\d+)", cast=int, default=None)
+    out = defaults.copy()
+    if ep is not None: out["epochs"] = int(max(1, min(ep, 2000)))
+    if lr is not None: out["lr"] = float(max(1e-6, min(lr, 1e-1)))
+    if co is not None: out["collocation"] = int(max(10, min(co, 5000)))
+    if bw is not None: out["bc_weight"] = float(max(1.0, min(bw, 1e4)))
+    if ve is not None: out["verbose_every"] = int(max(50, min(ve, 1000)))
+    return out
 class ExecAgent:
     def __init__(self, client: OpenAI, use_docker: bool, image: str = "pinn-sandbox"):
         self.client = client
@@ -84,11 +118,40 @@ class ExecAgent:
 
     def render_template(self, fragments: Dict[str,str]) -> str:
         tpl = open(TEMPLATE_PATH,"r",encoding="utf-8").read()
-        out = tpl.replace("        # <<<MODEL_DEF>>>", fragments.get("<<<MODEL_DEF>>>","pass"))
-        out = out.replace("        # <<<FORWARD_DEF>>>", fragments.get("<<<FORWARD_DEF>>>","return self.net(x)"))
-        out = out.replace('"# <<<HYPERPARAMS>>>"', json.dumps({"epochs":1200,"lr":1e-3,"collocation":200,"bc_weight":100.0,"verbose_every":200}))
-        # "replace" HYPERPARAMS block more directly:
-        out = out.replace("# <<<HYPERPARAMS>>>", fragments.get("<<<HYPERPARAMS>>>",' "epochs": 1200, "lr": 1e-3, "collocation": 200, "bc_weight": 100.0, "verbose_every": 200 '))
+        # defaults if LLM didn't provide
+        default_model = """self.net = nn.Sequential(
+    nn.Linear(1, 32), nn.Tanh(),
+    nn.Linear(32, 32), nn.Tanh(),
+    nn.Linear(32, 1)
+)"""
+        default_forward = "return self.net(x)"
+        model_def = fragments.get("<<<MODEL_DEF>>>", "").strip() or default_model
+        forward_def = fragments.get("<<<FORWARD_DEF>>>", "").strip() or default_forward
+        # ensure forward returns something sensible
+        if "return" not in forward_def:
+            forward_def = default_forward
+
+        # Replace model/forward blocks
+        out = tpl.replace("        # <<<MODEL_DEF>>>", model_def)
+        out = out.replace("        # <<<FORWARD_DEF>>>", forward_def)
+
+        # Sanitize hyperparams
+        raw_hp = fragments.get("<<<HYPERPARAMS>>>", "")
+        safe_hp = _sanitize_hparams_fragment(raw_hp if isinstance(raw_hp, str) else "")
+        # replace marker with valid Python literal
+        hp_literal = ",
+    ".join([f'"{k}": {repr(v)}' for k,v in safe_hp.items()])
+        out = out.replace("# __HYPERPARAMS_MARKER__", hp_literal)
+
+        # Quick AST pre-parse to ensure validity before writing
+        import ast
+        try:
+            ast.parse(out, filename="generated_impl.py")
+        except Exception as e:
+            # fallback to defaults entirely
+            out = tpl.replace("        # <<<MODEL_DEF>>>", default_model)\
+                     .replace("        # <<<FORWARD_DEF>>>", default_forward)\
+                     .replace("# __HYPERPARAMS_MARKER__", '"epochs": 500, "lr": 1e-3, "collocation": 200, "bc_weight": 100.0, "verbose_every": 200')
         open(GEN_PATH,"w",encoding="utf-8").write(out)
         return out
 

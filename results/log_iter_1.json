@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "reason": "AST safety check failed: {'ok': False, 'error': 'AST parse error: invalid syntax (generated_impl.py, line 46)'}",
+  "stdout": "",
+  "stderr": "",
+  "metrics": null,
+  "fragments": {
+    "<<<MODEL_DEF>>>": "class PINN(torch.nn.Module):\n    def __init__(self):\n        super(PINN, self).__init__()\n        layers = []\n        layers.append(torch.nn.Linear(1, hidden_units))\n        layers.append(torch.nn.Tanh())\n        for _ in range(max(0, hidden_layers - 1)):\n            layers.append(torch.nn.Linear(hidden_units, hidden_units))\n            layers.append(torch.nn.Tanh())\n        layers.append(torch.nn.Linear(hidden_units, 1))\n        self.net = torch.nn.Sequential(*layers)\n\n        # Xavier init for linear layers\n        for m in self.net:\n            if isinstance(m, torch.nn.Linear):\n                torch.nn.init.xavier_normal_(m.weight)\n                if m.bias is not None:\n                    torch.nn.init.zeros_(m.bias)\n<<<FORWARD_DEF>>>\ndef forward(self, x):\n    # ensure column vector\n    if x.dim() == 1:\n        x = x.unsqueeze(1)\n    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])\n    x = (x - 0.5) * 2.0\n    return self.net(x)\n<<<HYPERPARAMS>>>\nepochs = 5000\nlr = 1e-3\ncollocation = 1000\nbc_weight = 100.0\nverbose_every = 100\nhidden_layers = 3\nhidden_units = 50",
+    "<<<FORWARD_DEF>>>": "def forward(self, x):\n    # ensure column vector\n    if x.dim() == 1:\n        x = x.unsqueeze(1)\n    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])\n    x = (x - 0.5) * 2.0\n    return self.net(x)\n<<<HYPERPARAMS>>>\nepochs = 5000\nlr = 1e-3\ncollocation = 1000\nbc_weight = 100.0\nverbose_every = 100\nhidden_layers = 3\nhidden_units = 50",
+    "<<<HYPERPARAMS>>>": "epochs = 5000\nlr = 1e-3\ncollocation = 1000\nbc_weight = 100.0\nverbose_every = 100\nhidden_layers = 3\nhidden_units = 50"
+  }
+}
