@@ -1,0 +1,7 @@
+FROM python:3.11-slim
+RUN useradd -m runner
+USER runner
+WORKDIR /work
+COPY --chown=runner:runner requirements.txt /work/requirements.txt
+RUN pip install --user -r requirements.txt
+ENV PATH=/home/runner/.local/bin:$PATH

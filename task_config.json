@@ -1,0 +1,7 @@
+{
+  "task": "Poisson1D",
+  "domain": [
+    0.0,
+    1.0
+  ]
+}
