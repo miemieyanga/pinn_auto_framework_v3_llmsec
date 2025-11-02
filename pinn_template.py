@@ -90,9 +90,9 @@ def train_and_eval(seed=42):
     rel_l2 = float(np.linalg.norm(up - ut) / np.linalg.norm(ut))
 
     # save artifacts
-    os.makedirs("results", exist_ok=True)
-    np.savez("results/pred_latest.npz", x=xt.numpy().squeeze(), u_pred=up, u_exact=ut)
-    with open("results/metrics_latest.json","w",encoding="utf-8") as f:
+    os.makedirs("./results", exist_ok=True)
+    np.savez("./results/pred_latest.npz", x=xt.numpy().squeeze(), u_pred=up, u_exact=ut)
+    with open("./results/metrics_latest.json","w",encoding="utf-8") as f:
         json.dump({"final_loss": float(losses[-1]), "rel_l2": rel_l2, "loss_curve": losses[-200:]}, f)
 
     return {"final_loss": float(losses[-1]), "rel_l2": rel_l2}

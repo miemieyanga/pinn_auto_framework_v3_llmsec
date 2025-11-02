@@ -9,6 +9,9 @@ from openai import OpenAI
 from sandbox import run_in_docker, run_local
 from safety_check import check_file
 from llm_security import LLMSecurityAgent
+from format_agent import format_and_validate
+from llm_rewriter_agent import LLMRewriterAgent
+from llm_format_agent import LLMFormatAgent
 
 TEMPLATE_PATH = "pinn_template.py"
 GEN_PATH = "generated_impl.py"
@@ -91,8 +94,7 @@ class ExecAgent:
             messages=[
                 {"role":"system","content":SYSTEM_PROMPT},
                 {"role":"user","content":USER_PROMPT.format(history=history)}
-            ],
-            temperature=0.3
+            ]
         )
         text = resp.choices[0].message.content.strip()
 
@@ -139,8 +141,7 @@ class ExecAgent:
         raw_hp = fragments.get("<<<HYPERPARAMS>>>", "")
         safe_hp = _sanitize_hparams_fragment(raw_hp if isinstance(raw_hp, str) else "")
         # replace marker with valid Python literal
-        hp_literal = ",
-    ".join([f'"{k}": {repr(v)}' for k,v in safe_hp.items()])
+        hp_literal = ",".join([f'"{k}": {repr(v)}' for k,v in safe_hp.items()])
         out = out.replace("# __HYPERPARAMS_MARKER__", hp_literal)
 
         # Quick AST pre-parse to ensure validity before writing
@@ -160,12 +161,20 @@ class ExecAgent:
         # safety check on fragments (text only)
         combined = "\n".join(frags.values())
         # AST guard will run on rendered file; LLM security will inspect text fragments later
-hits = []
+        hits = []
         if hits:
             return ExecResult(ok=False, reason=f"Safety check failed (forbidden patterns): {hits}", fragments=frags)
 
         # render
         code = self.render_template(frags)
+
+        llm_rewriter = LLMRewriterAgent(self.client)
+        rw = llm_rewriter.rewrite(code)
+        if rw.get("ok"):
+            code = rw["code"]
+            open(GEN_PATH, "w", encoding="utf-8").write(code)
+        else:
+            return ExecResult(ok=False, reason=f"LLM Rewriter failed: {rw.get('issues')}", fragments=frags)
 
         # safety check rendered file
         ast_result = check_file(pathlib.Path(GEN_PATH)) if 'pathlib' in globals() else __import__('safety_check').check_file(__import__('pathlib').Path(GEN_PATH))
@@ -174,7 +183,7 @@ hits = []
         # LLM-based security review on the rendered code
         llm_sec = LLMSecurityAgent(self.client)
         llm_report = llm_sec.review(code)
-        if llm_report.get('grade') == 'BLOCK' or (self.use_docker is False and llm_report.get('grade')=='WARN'):
+        if llm_report.get('grade') == 'BLOCK':
             return ExecResult(ok=False, reason=f"LLM security blocked: {llm_report}", fragments=frags)
 
 

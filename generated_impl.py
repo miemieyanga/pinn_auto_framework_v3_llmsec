@@ -1,8 +1,8 @@
-\
-# GENERATED IMPLEMENTATION (by ExecAgent)
-# This file is regenerated each iteration. It must remain safe: no network, no shell, no system calls.
-
-import os, json, time, math
+import os
+import io
+import json
+import time
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,89 +13,63 @@ pi = math.pi
 
 def f(x):
     # u(x) = sin(pi x) => u'' = -pi^2 sin(pi x), so bring to residual u'' + pi^2 sin(pi x) = 0
-    return (pi**2) * torch.sin(pi * x)
+    return (pi ** 2) * torch.sin(pi * x)
+
 
 def u_exact(x):
     return torch.sin(pi * x)
 
-# ---------------------- MODEL (inserted by LLM) ------------------------------
-# The ExecAgent must fill the following class and HYPERPARAMS dict safely.
-# Allowed: torch, torch.nn, torch.optim, math, numpy.
-# Forbidden: disallowed risky libs & system calls (enforced by safety checker).
+# ---------------------- MODEL ----------------------------------------------
 class Model(nn.Module):
     def __init__(self):
-        super().__init__()
-class PINN(torch.nn.Module):
-    def __init__(self):
-        super(PINN, self).__init__()
-        layers = []
-        layers.append(torch.nn.Linear(1, hidden_units))
-        layers.append(torch.nn.Tanh())
-        for _ in range(max(0, hidden_layers - 1)):
-            layers.append(torch.nn.Linear(hidden_units, hidden_units))
-            layers.append(torch.nn.Tanh())
-        layers.append(torch.nn.Linear(hidden_units, 1))
-        self.net = torch.nn.Sequential(*layers)
-
-        # Xavier init for linear layers
-        for m in self.net:
-            if isinstance(m, torch.nn.Linear):
-                torch.nn.init.xavier_normal_(m.weight)
-                if m.bias is not None:
-                    torch.nn.init.zeros_(m.bias)
-<<<FORWARD_DEF>>>
-def forward(self, x):
-    # ensure column vector
-    if x.dim() == 1:
-        x = x.unsqueeze(1)
-    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])
-    x = (x - 0.5) * 2.0
-    return self.net(x)
-<<<HYPERPARAMS>>>
-epochs = 5000
-lr = 1e-3
-collocation = 1000
-bc_weight = 100.0
-verbose_every = 100
-hidden_layers = 3
-hidden_units = 50
+        super(Model, self).__init__()
+        # simple 3-layer MLP
+        self.net = nn.Sequential(
+            nn.Linear(1, 32),
+            nn.Tanh(),
+            nn.Linear(32, 32),
+            nn.Tanh(),
+            nn.Linear(32, 1),
+        )
 
     def forward(self, x):
-def forward(self, x):
-    # ensure column vector
-    if x.dim() == 1:
-        x = x.unsqueeze(1)
-    # scale input to [-1,1] (helps training for typical 1D domains like [0,1])
-    x = (x - 0.5) * 2.0
-    return self.net(x)
-<<<HYPERPARAMS>>>
-epochs = 5000
-lr = 1e-3
-collocation = 1000
-bc_weight = 100.0
-verbose_every = 100
-hidden_layers = 3
-hidden_units = 50
-        pass
+        # expect x shape (N,1)
+        return self.net(x)
 
 HYPERPARAMS = {
-    epochs = 5000
-lr = 1e-3
-collocation = 1000
-bc_weight = 100.0
-verbose_every = 100
-hidden_layers = 3
-hidden_units = 50
+    "epochs": 500,
+    "lr": 1e-3,
+    "collocation": 200,
+    "bc_weight": 100.0,
+    "verbose_every": 200
 }
 
-# ---------------------- PINN core --------------------------------------------
+# ---------------------- PINN core -----------------------------------------
 def physics_residual(model, x_collocation):
-    x_collocation = x_collocation.requires_grad_(True)
-    u = model(x_collocation)
-    u_x = torch.autograd.grad(u, x_collocation, grad_outputs=torch.ones_like(u), create_graph=True)[0]
-    u_xx = torch.autograd.grad(u_x, x_collocation, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
-    res = u_xx + f(x_collocation)
+    # ensure we have a tensor that requires grad
+    x = x_collocation.clone().detach().requires_grad_(True)
+    u = model(x)
+    # u has shape (N,1); compute gradient wrt x
+    grad_u = torch.autograd.grad(
+        outputs=u,
+        inputs=x,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    # grad_u has shape (N,1); compute second derivative
+    grad_u_x = torch.autograd.grad(
+        outputs=grad_u,
+        inputs=x,
+        grad_outputs=torch.ones_like(grad_u),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    res = grad_u_x + f(x)
     return res
+
 
 def train_and_eval(seed=42):
     # defaults with fallback
@@ -112,14 +86,16 @@ def train_and_eval(seed=42):
     t0 = time.time()
     losses = []
 
-    for epoch in range(1, epochs+1):
+    for epoch in range(1, epochs + 1):
+        # collocation points in interior (0,1)
         x_coll = torch.rand(collocation, 1, dtype=torch.float32)
         res = physics_residual(model, x_coll)
-        loss_phys = torch.mean(res**2)
+        loss_phys = torch.mean(res ** 2)
 
-        xb = torch.tensor([[0.0],[1.0]], dtype=torch.float32)
+        # boundary conditions u(0)=0, u(1)=0
+        xb = torch.tensor([[0.0], [1.0]], dtype=torch.float32)
         ub = model(xb)
-        loss_b = torch.mean(ub**2)
+        loss_b = torch.mean(ub ** 2)
 
         loss = loss_phys + bc_weight * loss_b
 
@@ -128,28 +104,77 @@ def train_and_eval(seed=42):
         optimizer.step()
 
         losses.append(float(loss.item()))
-        if verbose_every>0 and (epoch % verbose_every == 0 or epoch==1 or epoch==epochs):
+        if verbose_every > 0 and (epoch % verbose_every == 0 or epoch == 1 or epoch == epochs):
             with torch.no_grad():
-                xt = torch.linspace(0,1,200).unsqueeze(1)
+                xt = torch.linspace(0, 1, 200).unsqueeze(1)
                 up = model(xt).detach().numpy().squeeze()
-                ut = u_exact(xt).numpy().squeeze()
+                ut = u_exact(xt).detach().numpy().squeeze()
                 l2 = float(np.linalg.norm(up - ut) / np.linalg.norm(ut))
             print(f"[epoch={epoch}] loss={loss.item():.3e} relL2={l2:.3e}")
 
     # final eval
-    xt = torch.linspace(0,1,200).unsqueeze(1)
-    up = model(xt).detach().numpy().squeeze()
-    ut = u_exact(xt).numpy().squeeze()
+    xt = torch.linspace(0, 1, 200).unsqueeze(1)
+    with torch.no_grad():
+        up = model(xt).detach().numpy().squeeze()
+        ut = u_exact(xt).detach().numpy().squeeze()
     rel_l2 = float(np.linalg.norm(up - ut) / np.linalg.norm(ut))
 
-    # save artifacts
-    os.makedirs("results", exist_ok=True)
-    np.savez("results/pred_latest.npz", x=xt.numpy().squeeze(), u_pred=up, u_exact=ut)
-    with open("results/metrics_latest.json","w",encoding="utf-8") as f:
-        json.dump({"final_loss": float(losses[-1]), "rel_l2": rel_l2, "loss_curve": losses[-200:]}, f)
+    # save artifacts safely with size checks (<10MB)
+    results_dir = os.path.join('.', 'results')
+    try:
+        os.makedirs(results_dir, exist_ok=True)
+    except Exception as e:
+        print("Warning: could not create results directory:", e)
 
-    return {"final_loss": float(losses[-1]), "rel_l2": rel_l2}
+    # prepare arrays
+    x_np = xt.detach().numpy().squeeze()
+    u_pred = np.asarray(up)
+    u_ex = np.asarray(ut)
+
+    # save .npz in memory first to check size
+    try:
+        buf = io.BytesIO()
+        # numpy will write a zip archive into the buffer
+        np.savez(buf, x=x_np, u_pred=u_pred, u_exact=u_ex)
+        size_bytes = buf.getbuffer().nbytes
+        max_bytes = 10 * 1024 * 1024  # 10MB
+        if size_bytes < max_bytes:
+            try:
+                with open(os.path.join(results_dir, 'pred_latest.npz'), 'wb') as f:
+                    f.write(buf.getvalue())
+            except Exception as e:
+                print("Warning: failed to write pred_latest.npz:", e)
+        else:
+            print(f"Skipping saving pred_latest.npz (size {size_bytes} bytes >= {max_bytes} bytes)")
+    except Exception as e:
+        print("Warning: failed to prepare pred_latest.npz in memory:", e)
+
+    # save metrics JSON
+    metrics = {
+        "final_loss": float(losses[-1]) if len(losses) > 0 else None,
+        "rel_l2": rel_l2,
+        "loss_curve": losses[-200:]
+    }
+    try:
+        json_bytes = json.dumps(metrics, ensure_ascii=False).encode('utf-8')
+        if len(json_bytes) < 10 * 1024 * 1024:
+            try:
+                with open(os.path.join(results_dir, 'metrics_latest.json'), 'w', encoding='utf-8') as f:
+                    json.dump(metrics, f, ensure_ascii=False)
+            except Exception as e:
+                print("Warning: failed to write metrics_latest.json:", e)
+        else:
+            print("Skipping saving metrics_latest.json: JSON payload too large")
+    except Exception as e:
+        print("Warning: failed to prepare metrics JSON:", e)
+
+    print(f"Training completed in {time.time() - t0:.2f} seconds. final relL2={rel_l2:.3e}")
+    return {"final_loss": float(losses[-1]) if len(losses) > 0 else None, "rel_l2": rel_l2}
+
 
 if __name__ == "__main__":
-    m = train_and_eval()
-    print(json.dumps(m))
+    result = train_and_eval()
+    try:
+        print(json.dumps(result))
+    except Exception:
+        print(result)

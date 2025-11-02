@@ -75,8 +75,7 @@ class LLMSecurityAgent:
             messages=[
                 {"role":"system","content": SYSTEM_PROMPT},
                 {"role":"user","content": prompt}
-            ],
-            temperature=0.1
+            ]
         )
         text = resp.choices[0].message.content.strip()
 
